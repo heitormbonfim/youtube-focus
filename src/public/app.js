@@ -1,10 +1,15 @@
 /* ══════════════════════════════════════════════════════════════════
    YouTube Focus — Frontend
-   All API calls go to the local Node.js server (/api/search).
-   The server proxies to YouTube's Innertube API, bypassing CORS.
+   The API base URL is injected at render time by the web server
+   (see src/routes/home.js). The API service exposes /api/search and
+   /api/health on a separate port, proxying YouTube's Innertube API
+   server-side to bypass browser CORS restrictions.
    ══════════════════════════════════════════════════════════════════ */
 
 'use strict';
+
+// ── API base URL (injected by server template) ───────────────────────────────
+const API_URL = (typeof window !== 'undefined' && window.__YTF_API_URL__) || '';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const state = {
@@ -59,7 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
 async function checkServer() {
   setStatus('checking');
   try {
-    const r = await fetch('/api/search?q=test', { signal: AbortSignal.timeout(5000) });
+    const r = await fetch(`${API_URL}/api/health`, { signal: AbortSignal.timeout(5000) });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     state.serverOnline = true;
     setStatus('ok');
@@ -92,7 +97,7 @@ function showResults() {
 async function doSearch(rawQuery) {
   const query = rawQuery.trim();
   if (!query) return;
-  if (!state.serverOnline) { toast('Server offline — make sure node server.js is running'); return; }
+  if (!state.serverOnline) { toast('Server offline — make sure the API service is running'); return; }
 
   state.query             = query;
   state.continuationToken = null;
@@ -126,7 +131,7 @@ async function fetchPage(isMore) {
   }
 
   try {
-    const r    = await fetch('/api/search?' + params.toString());
+    const r    = await fetch(`${API_URL}/api/search?` + params.toString());
     const data = await r.json();
 
     if (data.error) throw new Error(data.error);
@@ -382,7 +387,8 @@ function escHtml(str) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 let _toastTimer;

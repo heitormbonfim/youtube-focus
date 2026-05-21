@@ -1,0 +1,40 @@
+# ─── Environment ─────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Node ────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.pnp/
+.pnp.js
+
+# ─── Build / dist ────────────────────────────────────────────────────────
+dist/
+build/
+coverage/
+.nyc_output/
+
+# ─── Editor / OS ─────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─── Logs / runtime ──────────────────────────────────────────────────────
+*.log
+logs/
+pids/
+*.pid
+*.seed
+*.tgz
+
+# ─── Docker ──────────────────────────────────────────────────────────────
+docker-compose.override.yml
