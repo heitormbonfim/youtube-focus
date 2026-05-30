@@ -216,6 +216,64 @@ kbd {
   color: var(--yt-text-2);
 }
 
+/* ── Recently watched ─────────────────────────────────────────────── */
+.recent {
+  width: 100%;
+  max-width: 1100px;
+  margin: 56px auto 0;
+  text-align: left;
+}
+
+.recent-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--yt-border);
+}
+
+.recent-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--yt-text);
+}
+
+.recent-clear {
+  background: none;
+  border: none;
+  color: var(--yt-text-3);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.recent-clear:hover { color: var(--yt-text); background: var(--yt-surface); }
+
+.recent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px 12px;
+}
+
+/* Resume progress bar on recent thumbnails */
+.card-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.card-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--yt-red);
+}
+
 /* ── Loading ──────────────────────────────────────────────────────── */
 #loading {
   display: none;

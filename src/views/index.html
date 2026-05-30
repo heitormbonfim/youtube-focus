@@ -6,6 +6,7 @@
   <title>{{appName}}</title>
   <meta name="description" content="YouTube without distractions. No recommendations, no noise, just what you searched for.">
   <meta name="theme-color" content="#0f0f0f">
+  <link rel="icon" href="/public/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/public/style.css">
@@ -81,6 +82,15 @@
         <kbd>Esc</kbd> close
       </div>
     </div>
+
+    <!-- Recently watched (populated from localStorage) -->
+    <section id="recent" class="recent" style="display:none">
+      <div class="recent-head">
+        <h2 class="recent-title">Recently watched</h2>
+        <button class="recent-clear" id="recent-clear" type="button">Clear history</button>
+      </div>
+      <div class="recent-grid" id="recent-grid"></div>
+    </section>
   </section>
 
   <!-- ═══ LOADING ═══ -->

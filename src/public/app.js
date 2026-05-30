@@ -19,8 +19,11 @@ const state = {
   serverOnline:      false,
   player:            null,   // YT.Player instance
   ytApiReady:        false,
-  pendingVideo:      null,   // { id, title } buffered while API loads
+  pendingVideo:      null,   // { video, position, autoplay } buffered while API loads
+  currentVideo:      null,   // the video object currently open in the modal
 };
+
+let _posTimer = null;        // interval id for periodic position persistence
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -51,14 +54,129 @@ const dom = {
   statusPill:    $('status-pill'),
   statusLabel:   $('status-label'),
   toast:         $('toast'),
+  recent:        $('recent'),
+  recentGrid:    $('recent-grid'),
+  recentClear:   $('recent-clear'),
 };
+
+// ── Persistence (localStorage) ──────────────────────────────────────────────
+// Best-effort: every read/write is guarded so the app works identically when
+// storage is unavailable (private mode / quota exceeded).
+const STORE_KEY    = 'ytf:session:v1';
+const RESULTS_CAP  = 60;
+const RECENT_CAP   = 10;
+
+function loadStore() {
+  try {
+    const data = JSON.parse(localStorage.getItem(STORE_KEY));
+    return (data && data.version === 1) ? data : { version: 1, recent: [] };
+  } catch {
+    return { version: 1, recent: [] };
+  }
+}
+
+function saveStore(patch) {
+  try {
+    const next = { ...loadStore(), ...patch, version: 1 };
+    localStorage.setItem(STORE_KEY, JSON.stringify(next));
+  } catch { /* quota / unavailable — ignore */ }
+}
+
+// Trim a video to the fields we persist (keeps storage small + predictable).
+function slimVideo(v) {
+  return {
+    id:       v.id,
+    title:    v.title    ?? '',
+    channel:  v.channel  ?? '',
+    views:    v.views    ?? '',
+    pubDate:  v.pubDate  ?? '',
+    duration: v.duration ?? '',
+    thumb:    v.thumb    ?? '',
+  };
+}
+
+// Insert/update a video at the front of the recent list (dedupe by id, cap N).
+function upsertRecent(video, position = 0, duration = 0) {
+  const store  = loadStore();
+  const recent = Array.isArray(store.recent) ? store.recent : [];
+  const prev   = recent.find(r => r.id === video.id);
+  const entry  = {
+    ...slimVideo(video),
+    position,
+    duration: duration || prev?.duration || 0,   // keep known duration
+    updatedAt: Date.now(),
+  };
+  const next   = [entry, ...recent.filter(r => r.id !== video.id)].slice(0, RECENT_CAP);
+  saveStore({ recent: next });
+}
+
+// Update the saved position for the currently-open video (current + recent).
+function persistPosition() {
+  const v = state.currentVideo;
+  if (!v || !state.player) return;
+  let position, duration;
+  try {
+    position = state.player.getCurrentTime?.() ?? 0;
+    duration = state.player.getDuration?.()    ?? 0;
+  } catch { return; }
+  if (!Number.isFinite(position)) return;
+
+  const store  = loadStore();
+  const recent = (store.recent ?? []).map(r =>
+    r.id === v.id ? { ...r, position, duration, updatedAt: Date.now() } : r);
+  saveStore({
+    current: { id: v.id, title: v.title, position, duration, updatedAt: Date.now() },
+    recent,
+  });
+}
+
+function startPositionTimer() {
+  stopPositionTimer();
+  _posTimer = setInterval(persistPosition, 5000);
+}
+
+function stopPositionTimer() {
+  if (_posTimer) { clearInterval(_posTimer); _posTimer = null; }
+}
+
+// Forget the actively-watched video so it won't auto-reopen, but keep history.
+function clearCurrent() {
+  saveStore({ current: null });
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   bindEvents();
   checkServer();
-  showHero();
+  restoreSession();
 });
+
+// Rebuild the previous session from localStorage: cached results grid, the
+// recently-watched row, and (if any) auto-reopen the last video — paused.
+function restoreSession() {
+  const store = loadStore();
+
+  renderRecent(store.recent ?? []);
+
+  if (store.query && Array.isArray(store.videos) && store.videos.length) {
+    state.query           = store.query;
+    dom.headerInput.value = store.query;
+    dom.resultsMeta.textContent = `Results for "${store.query}"`;
+    renderCards(store.videos, true);
+    state.continuationToken = null;
+    dom.loadMoreWrap.style.display = 'none';
+    showResults();
+  } else {
+    showHero();
+  }
+
+  // Auto-reopen the last watched video, paused at its saved position.
+  if (store.current?.id) {
+    const fromRecent = (store.recent ?? []).find(r => r.id === store.current.id);
+    const video = fromRecent ?? { id: store.current.id, title: store.current.title };
+    openModal(video, { position: store.current.position ?? 0, autoplay: false });
+  }
+}
 
 // ── Server health check ───────────────────────────────────────────────────────
 async function checkServer() {
@@ -144,6 +262,12 @@ async function fetchPage(isMore) {
       dom.resultsMeta.textContent =
         `Results for "${state.query}"` +
         (data.videos?.length ? ` — ${data.videos.length}+ videos` : '');
+
+      // Cache the first page so the grid restores instantly on return.
+      saveStore({
+        query:  state.query,
+        videos: (data.videos ?? []).slice(0, RESULTS_CAP).map(slimVideo),
+      });
     }
 
     dom.loadMoreWrap.style.display = state.continuationToken ? 'flex' : 'none';
@@ -210,28 +334,89 @@ function renderCards(videos, replace) {
         ${meta ? `<p class="card-meta">${escHtml(meta)}</p>` : ''}
       </div>`;
 
-    card.addEventListener('click', () => openModal(v.id, v.title));
+    card.addEventListener('click', () => openModal(v));
     frag.appendChild(card);
   });
 
   grid.appendChild(frag);
 }
 
+// ── Render recently-watched row ─────────────────────────────────────────────
+function renderRecent(list) {
+  const items = Array.isArray(list) ? list : [];
+  if (!items.length) {
+    dom.recent.style.display = 'none';
+    dom.recentGrid.innerHTML = '';
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+
+  items.forEach(v => {
+    const thumb = v.thumb || `https://i.ytimg.com/vi/${v.id}/mqdefault.jpg`;
+    const pct   = v.duration > 0 ? Math.min(100, (v.position / v.duration) * 100) : 0;
+
+    const card = document.createElement('div');
+    card.className = 'video-card';
+    card.setAttribute('role', 'article');
+    card.setAttribute('aria-label', v.title);
+
+    card.innerHTML = `
+      <div class="card-thumb-wrap">
+        <img class="card-thumb"
+             src="${escHtml(thumb)}"
+             alt=""
+             loading="lazy"
+             onerror="this.style.opacity='0'">
+        <div class="play-btn" aria-hidden="true">
+          <div class="play-btn-circle">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+          </div>
+        </div>
+        ${pct > 0 ? `<div class="card-progress"><span style="width:${pct.toFixed(1)}%"></span></div>` : ''}
+      </div>
+      <div class="card-body">
+        <p class="card-title">${escHtml(v.title)}</p>
+        <p class="card-channel">${escHtml(v.channel)}</p>
+      </div>`;
+
+    card.addEventListener('click', () => openModal(v, { position: v.position ?? 0 }));
+    frag.appendChild(card);
+  });
+
+  dom.recentGrid.innerHTML = '';
+  dom.recentGrid.appendChild(frag);
+  dom.recent.style.display = '';
+}
+
 // ── Modal & Player ────────────────────────────────────────────────────────────
-function openModal(videoId, title) {
-  dom.modalTitle.textContent = title;
+// `video` is a video object ({ id, title, channel, thumb, ... }).
+// opts.position — seconds to resume from. opts.autoplay — false leaves it paused
+// (used when restoring on boot, where browsers block autoplay-with-sound).
+function openModal(video, { position = 0, autoplay = true } = {}) {
+  state.currentVideo = video;
+  dom.modalTitle.textContent = video.title ?? '';
+  setTitle(video.title);
   dom.modal.classList.add('active');
   document.body.style.overflow = 'hidden';
   clearOverlays();
 
+  // Record this watch immediately so the recent row is up to date even if the
+  // user never plays it; refresh the row in the background.
+  upsertRecent(video, position, 0);
+  saveStore({ current: { id: video.id, title: video.title ?? '', position, duration: 0, updatedAt: Date.now() } });
+  renderRecent(loadStore().recent ?? []);
+
   if (state.ytApiReady) {
-    buildPlayer(videoId);
+    buildPlayer(video.id, { start: position, autoplay });
   } else {
-    state.pendingVideo = { id: videoId, title };
+    state.pendingVideo = { video, position, autoplay };
   }
 }
 
-function buildPlayer(videoId) {
+function buildPlayer(videoId, { start = 0, autoplay = true } = {}) {
   destroyPlayer();
 
   // Re-create the target div (destroyed with the previous player instance)
@@ -244,7 +429,8 @@ function buildPlayer(videoId) {
   state.player = new YT.Player('yt-player', {
     videoId,
     playerVars: {
-      autoplay:       1,
+      autoplay:       autoplay ? 1 : 0,
+      start:          Math.max(0, Math.floor(start)),
       rel:            0,       // minimize related videos
       modestbranding: 1,       // reduce YT branding
       iv_load_policy: 3,       // disable annotations
@@ -252,14 +438,23 @@ function buildPlayer(videoId) {
       origin:         window.location.origin,
     },
     events: {
-      onReady:       e  => e.target.playVideo(),
+      onReady: e => {
+        if (autoplay) {
+          e.target.playVideo();
+        } else {
+          // Restored session: stay paused at `start`, prompt for a click.
+          dom.overlayPause.classList.add('active');
+        }
+      },
       onStateChange: onPlayerStateChange,
     },
   });
 }
 
 function destroyPlayer() {
+  stopPositionTimer();
   if (!state.player) return;
+  persistPosition();
   try { state.player.stopVideo(); state.player.destroy(); } catch { /* ignore */ }
   state.player = null;
 }
@@ -268,7 +463,13 @@ function onPlayerStateChange(event) {
   clearOverlays();
 
   switch (event.data) {
+    case YT.PlayerState.PLAYING:
+      startPositionTimer();
+      break;
+
     case YT.PlayerState.PAUSED:
+      stopPositionTimer();
+      persistPosition();
       // Delay slightly so we don't flash the overlay during buffering
       setTimeout(() => {
         if (state.player?.getPlayerState() === YT.PlayerState.PAUSED) {
@@ -278,9 +479,23 @@ function onPlayerStateChange(event) {
       break;
 
     case YT.PlayerState.ENDED:
+      stopPositionTimer();
+      markCurrentComplete();
       dom.overlayEnd.classList.add('active');
       break;
   }
+}
+
+// On completion, reset the saved position to 0 so the video doesn't resume
+// stuck at the final frame next time.
+function markCurrentComplete() {
+  const v = state.currentVideo;
+  if (!v) return;
+  const store  = loadStore();
+  const recent = (store.recent ?? []).map(r =>
+    r.id === v.id ? { ...r, position: 0, updatedAt: Date.now() } : r);
+  saveStore({ current: null, recent });
+  renderRecent(recent);
 }
 
 function clearOverlays() {
@@ -291,9 +506,13 @@ function clearOverlays() {
 function closeModal() {
   if (document.fullscreenElement) document.exitFullscreen();
   clearOverlays();
-  destroyPlayer();
+  destroyPlayer();            // persists final position into recent history
+  clearCurrent();             // explicit close → don't auto-reopen on return
+  state.currentVideo = null;
   dom.modal.classList.remove('active');
   document.body.style.overflow = '';
+  setTitle();
+  renderRecent(loadStore().recent ?? []);
 }
 
 function resumeVideo() {
@@ -344,7 +563,7 @@ function bindEvents() {
   dom.replayBtn.addEventListener('click', replayVideo);
   dom.backBtn.addEventListener('click', closeModal);
 
-  // Logo click → home
+  // Logo click → home (stops auto-reopening the video, keeps recent history)
   document.querySelector('.logo')?.addEventListener('click', e => {
     e.preventDefault();
     state.query             = '';
@@ -352,7 +571,24 @@ function bindEvents() {
     dom.heroInput.value     = '';
     dom.headerInput.value   = '';
     dom.resultsGrid.innerHTML = '';
+    if (dom.modal.classList.contains('active')) closeModal();
+    clearCurrent();
+    saveStore({ query: null, videos: null });
+    renderRecent(loadStore().recent ?? []);
     showHero();
+  });
+
+  // Clear recently-watched history
+  dom.recentClear?.addEventListener('click', () => {
+    saveStore({ recent: [], current: null });
+    renderRecent([]);
+  });
+
+  // Flush playback position when the page is hidden / unloaded (covers browser
+  // and computer close — more reliable than `beforeunload`).
+  window.addEventListener('pagehide', persistPosition);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') persistPosition();
   });
 
   // Keyboard shortcuts
@@ -376,12 +612,18 @@ function bindEvents() {
 window.onYouTubeIframeAPIReady = function () {
   state.ytApiReady = true;
   if (state.pendingVideo) {
-    buildPlayer(state.pendingVideo.id);
+    const { video, position, autoplay } = state.pendingVideo;
+    buildPlayer(video.id, { start: position, autoplay });
     state.pendingVideo = null;
   }
 };
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
+// Reflect the playing video in the browser tab title; reset when idle.
+function setTitle(videoTitle) {
+  document.title = videoTitle ? `▶ ${videoTitle} — YouTube Focus` : 'YouTube Focus';
+}
+
 function escHtml(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;')
