@@ -68,6 +68,10 @@ button { font-family: inherit; cursor: pointer; }
 .header-center { flex: 2; display: flex; justify-content: center; max-width: 740px; margin: 0 auto; }
 .header-end    { flex: 1; display: flex; justify-content: flex-end; align-items: center; }
 
+/* On the hero/home view the hero owns the only search bar — hide the header's
+   duplicate so just one search bar is ever visible at a time. */
+#header.home .header-center { display: none; }
+
 /* Logo */
 .logo {
   display: flex;
@@ -170,6 +174,7 @@ button { font-family: inherit; cursor: pointer; }
 /* ── Hero ─────────────────────────────────────────────────────────── */
 #hero {
   display: none;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   min-height: calc(100vh - var(--header-h));
@@ -667,12 +672,32 @@ kbd {
   .header-center { max-width: 100%; }
   #results { padding: 16px 16px 60px; }
   .results-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .recent-grid  { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
   .logo-wordmark { display: none; }
+  .recent { margin-top: 40px; }
 }
 
 @media (max-width: 600px) {
-  #header { padding: 0 12px; }
+  #header { padding: 0 10px; gap: 6px; }
+  /* Let the centred search bar claim the free space; logo + status hug their content */
+  .header-start { flex: 0 0 auto; }
+  .header-end   { flex: 0 0 auto; }
+  .status-label { display: none; }            /* keep just the coloured status dot */
+  .status-pill  { padding: 5px; }
+
+  #hero { padding: 32px 16px; }
+  .hero-sub { margin-bottom: 28px; }
+
   .results-grid { grid-template-columns: 1fr 1fr; gap: 12px 8px; }
+  .recent-grid  { grid-template-columns: 1fr 1fr; gap: 14px 8px; }
+  .recent { margin-top: 32px; }
+
   .hero-heading { font-size: 26px; }
   .modal-ctrl-btn span { display: none; }
+}
+
+@media (max-width: 380px) {
+  .results-grid,
+  .recent-grid  { grid-template-columns: 1fr; }
+  .hero-heading { font-size: 22px; }
 }

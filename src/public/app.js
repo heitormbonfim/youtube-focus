@@ -29,6 +29,7 @@ let _posTimer = null;        // interval id for periodic position persistence
 const $ = id => document.getElementById(id);
 
 const dom = {
+  header:        $('header'),
   hero:          $('hero'),
   loading:       $('loading'),
   results:       $('results'),
@@ -201,6 +202,7 @@ function setStatus(type) {
 // ── Navigation ────────────────────────────────────────────────────────────────
 function showHero() {
   dom.hero.classList.add('visible');
+  dom.header.classList.add('home');     // hide the header's duplicate search bar
   dom.results.classList.remove('visible');
   dom.loading.classList.remove('visible');
   dom.loadMoreWrap.style.display = 'none';
@@ -208,6 +210,7 @@ function showHero() {
 
 function showResults() {
   dom.hero.classList.remove('visible');
+  dom.header.classList.remove('home');  // header search bar takes over in results view
   dom.results.classList.add('visible');
 }
 
